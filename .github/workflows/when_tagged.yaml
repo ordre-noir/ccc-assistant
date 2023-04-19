@@ -30,11 +30,11 @@ jobs:
       - name: Build distribution 📦
         run: |
           poetry run -- python -m nuitka --onefile --show-progress --follow-imports --output-dir=build --remove-output --static-libpython=no --include-package=discord ccc_assistant/bot.py
-          mv build/bot.dist build/ccc-assistant-bot.bin
+          mv build/bot.bin build/ccc-assistant-bot.bin
       - name: Upload binary
         uses: actions/upload-artifact@v3
         with:
-          name: ccc-assistant-bot.bin
+          name: ccc-assistant-bot
           path: build/ccc-assistant-bot.bin
           retention-days: 1
   publish-deb:
@@ -49,8 +49,8 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v3
         with:
-          name: ccc-assistant-bot.bin
-          path: build
+          name: ccc-assistant-bot
+          path: build/ccc-assistant-bot.bin
       - name: Build deb package
         run: |
           mv build/ccc-assistant-bot.bin debian/ccc-assistant/usr/bin/ccc-assistant-bot

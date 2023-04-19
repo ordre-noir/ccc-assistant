@@ -3,3 +3,4 @@ Description: Citizen Content Creator Assistant is a discord bot to help managing
 Version: {{ VERSION }}
 Architecture: amd64
 Maintainer: nargit 
+Depends: libc6 (>= 2.31)
