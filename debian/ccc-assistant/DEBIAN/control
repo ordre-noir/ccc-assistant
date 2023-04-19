@@ -1,6 +1,6 @@
-Package: ccc-assistant-bot
+Package: ccc-assistant
 Description: Citizen Content Creator Assistant is a discord bot to help managing the server
-Version: {{ VERSION }}
+Version: 0.0.0
 Architecture: amd64
 Maintainer: nargit 
 Depends: libc6 (>= 2.31)

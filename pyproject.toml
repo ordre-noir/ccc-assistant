@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ccc-assistant"
-version = "0.1.0"
+version = "0.0.0"
 description = ""
 authors = ["NargiT <3153333+NargiT@users.noreply.github.com>"]
 readme = "README.md"

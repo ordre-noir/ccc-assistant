@@ -25,17 +25,18 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install poetry
+          sed -i "s/0.0.0/${{ github.ref_name }}/g" pyproject.toml
       - name: Install dependencies
         run: poetry install
       - name: Build distribution 📦
         run: |
           poetry run -- python -m nuitka --onefile --show-progress --follow-imports --output-dir=build --remove-output --static-libpython=no --include-package=discord ccc_assistant/bot.py
-          mv build/bot.bin build/ccc-assistant-bot.bin
+          mv build/bot.bin build/ccc-assistant
       - name: Upload binary
         uses: actions/upload-artifact@v3
         with:
-          name: ccc-assistant-bot
-          path: build/ccc-assistant-bot.bin
+          name: ccc-assistant
+          path: build/ccc-assistant
           retention-days: 1
   publish-deb:
     needs: publish-binary
@@ -49,19 +50,19 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v3
         with:
-          name: ccc-assistant-bot
-          path: build/ccc-assistant-bot.bin
+          name: ccc-assistant
+          path: build/ccc-assistant
       - name: Build deb package
         run: |
-          mv build/ccc-assistant-bot.bin debian/ccc-assistant/usr/local/bin/ccc-assistant-bot
-          chmod u+x debian/ccc-assistant/usr/local/bin/ccc-assistant-bot
+          mv build/ccc-assistant debian/ccc-assistant/usr/local/bin/
+          chmod u+x debian/ccc-assistant/usr/local/bin/ccc-assistant
           rm debian/ccc-assistant/usr/local/bin/.gitkeep
-          sed -i "s/{{ VERSION }}/${{ github.ref_name }}/g" debian/ccc-assistant/DEBIAN/control
-          dpkg-deb -Sextreme --build debian/ccc-assistant ccc-assistant-bot.deb
+          sed -i "s/0.0.0/${{ github.ref_name }}/g" debian/ccc-assistant/DEBIAN/control
+          dpkg-deb -Sextreme --build debian/ccc-assistant ccc-assistant.deb
       - name: Upload deb package
         uses: softprops/action-gh-release@v1
         with:
-          files: ccc-assistant-bot.deb
+          files: ccc-assistant.deb
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
