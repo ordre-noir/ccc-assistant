@@ -50,17 +50,20 @@ class MoveCog(commands.Cog):
     async def on_ready(self):
         logging.info("Start coroutines")
 
-    @commands.slash_command(name="version", description="CCC Assistant version", description_localizations={"fr": "Version de CCC Assistant"})
+    @commands.slash_command(name="version", description="CCC Assistant version",
+                            description_localizations={"fr": "Version de CCC Assistant"})
     async def version(self, ctx: ApplicationContext):
         await ctx.respond(content=f"Version: {VERSION}")
 
-    @commands.slash_command(name="stats", description="Statistics about a channel", name_localizations={"fr": "statistiques"},
+    @commands.slash_command(name="stats", description="Statistics about a channel",
+                            name_localizations={"fr": "statistiques"},
                             description_localizations={"fr": "Statistiques sur un salon"})
     async def chan_stats(self, ctx: ApplicationContext, origin: Option(discord.TextChannel,
                                                                        name="origin",
                                                                        description="Choose your channel",
                                                                        name_localizations={"fr": "origine"},
-                                                                       description_localizations={"fr": "Choisissez votre salon"},
+                                                                       description_localizations={
+                                                                           "fr": "Choisissez votre salon"},
                                                                        required=True)):
         await ctx.respond(content="Calculating...", ephemeral=True)
 
@@ -95,17 +98,17 @@ class MoveCog(commands.Cog):
                                               name_localizations={"fr": "destination"},
                                               required=True,
                                               description_localizations={"fr": "Choisissez le fils d'un forum"}),
+                          until_message_id: Option(name="from-message", input_type=str,
+                                                   name_localizations={"fr": "depuis-message"},
+                                                   description="Message id to start from, fallback to the oldest message",
+                                                   required=False, default=None, description_localizations={
+                                  "fr": "Message id de départ, si non spécifié, depuis le premier message reçu"}),
                           before_message_id: Option(name="before-message", input_type=str,
-                                                    name_localizations={"fr": "depuis-le-message"},
-                                                    description="Message id to start from, if not specified, fallback to the most recent "
+                                                    name_localizations={"fr": "avant-message"},
+                                                    description="Message id to stop at, if not specified, fallback to the most recent"
                                                                 "message",
                                                     required=False, description_localizations={
-                                  "fr": "Message id de départ, si non spécifié, depuis le dernier message reçu"}),
-                          until_message_id: Option(name="until-message", input_type=str,
-                                                   name_localizations={"fr": "jusqu-au-message"},
-                                                   description="Message id to stop at, fallback to the oldest message",
-                                                   required=False, default=None, description_localizations={
-                                  "fr": "Message id d'arrêt, si non spécifié, remonter tout l'historique"})):
+                                  "fr": "Message id d'arrêt, si non spécifié, jusqu'au dernier message reçu"})):
         start = perf_counter()
         if origin.last_message_id is None:
             await ctx.respond(content="Origin channel has no messages, nothing to process")
@@ -149,7 +152,8 @@ class MoveCog(commands.Cog):
                         attached_files.append(image_file)
                 if len(current_urls) > 0 or len(attached_files) > 0:
                     artist_messages.append(
-                        AristMessage(artist, source=message, when=message.created_at, urls=current_urls, files=attached_files))
+                        AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
+                                     files=attached_files))
         await ctx.send(
             f"Total messages processed: **{to_process}**. Valid messages (with images) **{len(artist_messages)}**.")
 
@@ -168,15 +172,16 @@ Original date:{posted_time}
 """
             await destination.send(content=separator)
 
-            urls = " ".join(url for url in artist_message.urls)
-            for url in urls:
-                await destination.send(content=url)
+            urls = " ".join(artist_message.urls)
+            if urls:
+                await destination.send(content=urls)
 
             for file in artist_message.files:
                 try:
                     await destination.send(file=file)
                 except:
-                    await ctx.send(f"Error while sending attachement {file.filename}for message {artist_message.source.jump_url}")
+                    await ctx.send(
+                        f"Error while sending attachement {file.filename}for message {artist_message.source.jump_url}")
 
         end = perf_counter()
         logging.info("Finished in %s seconds", end - start)
