@@ -54,8 +54,8 @@ jobs:
       - name: Build deb package
         run: |
           mv build/ccc-assistant-bot.bin debian/ccc-assistant/usr/local/bin/ccc-assistant-bot
-          chmod u+x debian/ccc-assistant/usr/bin/ccc-assistant-bot
-          rm debian/ccc-assistant/usr/bin/.gitkeep
+          chmod u+x debian/ccc-assistant/usr/local/bin/ccc-assistant-bot
+          rm debian/ccc-assistant/usr/local/bin/.gitkeep
           sed -i "s/{{ VERSION }}/${{ github.ref_name }}/g" debian/ccc-assistant/DEBIAN/control
           dpkg-deb -Sextreme --build debian/ccc-assistant ccc-assistant-bot.deb
       - name: Upload deb package
