@@ -51,10 +51,9 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: ccc-assistant
-          path: build/ccc-assistant
+          path: debian/ccc-assistant/usr/local/bin/
       - name: Build deb package
         run: |
-          mv build/ccc-assistant debian/ccc-assistant/usr/local/bin/
           chmod u+x debian/ccc-assistant/usr/local/bin/ccc-assistant
           rm debian/ccc-assistant/usr/local/bin/.gitkeep
           sed -i "s/0.0.0/${{ github.ref_name }}/g" debian/ccc-assistant/DEBIAN/control
