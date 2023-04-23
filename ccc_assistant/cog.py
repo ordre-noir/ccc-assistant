@@ -7,10 +7,108 @@ from time import perf_counter
 from typing import List
 
 import discord
-from discord import ApplicationContext, Option, Cog
+from discord import ApplicationContext, Option
 from discord.ext import commands
 
 from .config import VERSION
+
+
+class ProcessMessagesThenPublish:
+    def __init__(self, context: ApplicationContext, messages: List[discord.Message], origin: discord.TextChannel,
+                 destination: discord.Thread):
+        self._destination = destination
+        self._origin = origin
+        self._context = context
+        self._messages = messages
+
+        self._producer_completed = asyncio.Event()
+        self._image_to_process_queue = asyncio.Queue(maxsize=20)
+
+    async def _read_messages(self):
+        for message in self._messages:
+            if message.type == discord.MessageType.default and not message.author.bot:
+                if isinstance(message.author, discord.Member):
+                    nick = f"/{message.author.nick}"
+                else:
+                    nick = ""
+                artist = f"{message.author.name}#{message.author.discriminator}{nick}"
+                current_urls = []
+                attached_files = []
+                if message.content:
+                    current_urls.extend(ExtractImages(message.content).images_urls())
+                for attachement in message.attachments:
+                    image_content_types = ("image/png", "image/jpg", "image/jpeg", "image/webp")
+                    if attachement.content_type in image_content_types:
+                        image_file = await attachement.to_file()
+                        attached_files.append(image_file)
+                    elif attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
+                        logging.info(f"Found attachement with image extension: {attachement.filename}")
+                        attached_files.append(await attachement.to_file())
+                if len(current_urls) > 0 or len(attached_files) > 0:
+                    arist_message = AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
+                                                 files=attached_files)
+                    await self._image_to_process_queue.put(arist_message)
+        self._producer_completed.set()
+
+    async def _process_messages(self):
+        while True:
+            artist_message: AristMessage = await self._image_to_process_queue.get()
+            await self._context.send(
+                f"Processing {artist_message.source.jump_url} message. "
+                f"link(s)={len(artist_message.urls)}, "
+                f"attachement(s)={len(artist_message.files)} "),
+
+            utc_time = calendar.timegm(artist_message.when.utctimetuple())
+            posted_time = f"<t:{utc_time}:f>"
+            separator = f"""``` Imported content from old channel ```
+{artist_message.author}
+Original date:{posted_time}
+"""
+            await self._destination.send(content=separator)
+
+            urls = " ".join(artist_message.urls)
+            if urls:
+                await self._destination.send(content=urls)
+
+            for file in artist_message.files:
+                try:
+                    await self._destination.send(file=file)
+                except:
+                    await self._context.send(
+                        f"Error while sending attachement {file.filename}for message {artist_message.source.jump_url}")
+
+            self._image_to_process_queue.task_done()
+
+    async def _monitoring(self):
+        while True:
+            max_size = self._image_to_process_queue.maxsize
+            await self._context.send(f"Queue size (update every 15sec): {self._image_to_process_queue.qsize()}/{max_size}")
+            await asyncio.sleep(15)
+
+    async def _log_exceptions(self, awaitable):
+        try:
+            return await awaitable
+        except asyncio.exceptions.CancelledError:
+            logging.debug("coroutine was cancelled")
+        except:
+            logging.exception("Unhandled exception %s", awaitable)
+
+    async def main(self):
+        start = perf_counter()
+        coroutines = [
+            asyncio.create_task(self._log_exceptions(self._read_messages())),
+            asyncio.create_task(self._log_exceptions(self._process_messages())),
+            asyncio.create_task(self._log_exceptions(self._monitoring()))
+        ]
+
+        await self._producer_completed.wait()
+        await self._image_to_process_queue.join()
+
+        for coroutine in coroutines:
+            coroutine.cancel()
+        end = perf_counter()
+
+        await self._context.send(f"Finished in {end - start:.2f} seconds")
 
 
 class ExtractImages:
@@ -109,7 +207,7 @@ class MoveCog(commands.Cog):
                                                                 "message",
                                                     required=False, description_localizations={
                                   "fr": "Message id d'arrêt, si non spécifié, jusqu'au dernier message reçu"})):
-        start = perf_counter()
+
         if origin.last_message_id is None:
             await ctx.respond(content="Origin channel has no messages, nothing to process")
             return
@@ -132,58 +230,5 @@ class MoveCog(commands.Cog):
 
         histories = await origin.history(limit=None, before=before_date, after=until_date, oldest_first=True).flatten()
         to_process = len(histories)
-        artist_messages: List[AristMessage] = []
-        for message in histories:
-            if message.type == discord.MessageType.default and not message.author.bot:
-                if isinstance(message.author, discord.Member):
-                    nick = f"/{message.author.nick}"
-                else:
-                    nick = ""
-                artist = f"{message.author.name}#{message.author.discriminator}{nick}"
-                current_urls = []
-                attached_files = []
-                if message.content:
-                    current_urls.extend(ExtractImages(message.content).images_urls())
-                for attachement in message.attachments:
-                    image_content_types = ("image/png", "image/jpg", "image/jpeg", "image/webp")
-                    if attachement.content_type in image_content_types:
-                        image_file = await attachement.to_file()
-                        attached_files.append(image_file)
-                    elif attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                        logging.info(f"Found attachement with image extension: {attachement.filename}")
-                        attached_files.append(await attachement.to_file())
-                if len(current_urls) > 0 or len(attached_files) > 0:
-                    artist_messages.append(
-                        AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
-                                     files=attached_files))
-        await ctx.send(
-            f"Total messages processed: **{to_process}**. Valid messages (with images) **{len(artist_messages)}**.")
-
-        for artist_message in artist_messages:
-            await asyncio.sleep(0.5)
-            await ctx.send(
-                f"Processing {artist_message.source.jump_url} message. "
-                f"link(s)={len(artist_message.urls)}, "
-                f"attachement(s)={len(artist_message.files)} "),
-
-            utc_time = calendar.timegm(artist_message.when.utctimetuple())
-            posted_time = f"<t:{utc_time}:f>"
-            separator = f"""``` Imported content from old channel ```
-{artist_message.author}
-Original date:{posted_time}
-"""
-            await destination.send(content=separator)
-
-            urls = " ".join(artist_message.urls)
-            if urls:
-                await destination.send(content=urls)
-
-            for file in artist_message.files:
-                try:
-                    await destination.send(file=file)
-                except:
-                    await ctx.send(
-                        f"Error while sending attachement {file.filename}for message {artist_message.source.jump_url}")
-
-        end = perf_counter()
-        logging.info("Finished in %s seconds", end - start)
+        await ctx.send(f"Total messages processed: **{to_process}**.")
+        await ProcessMessagesThenPublish(ctx, histories, origin, destination).main()
