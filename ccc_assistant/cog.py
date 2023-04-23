@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import List
 
 import discord
-from discord import ApplicationContext, Option
+from discord import ApplicationContext, Option, Cog
 from discord.ext import commands
 
 from .config import VERSION
@@ -117,11 +117,11 @@ class MoveCog(commands.Cog):
         if not before_message_id:
             before_message_id = origin.last_message_id
 
-        before_message: discord.Message = await origin.fetch_message(before_message_id)
+        before_message: discord.Message = await origin.fetch_message(int(before_message_id))
         before_date = before_message.created_at
         until_date = None
         if until_message_id:
-            until_message = await origin.fetch_message(until_message_id)
+            until_message = await origin.fetch_message(int(until_message_id))
             until_date = until_message.created_at
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to " \
                               f"{until_message.jump_url}"
@@ -145,11 +145,13 @@ class MoveCog(commands.Cog):
                 if message.content:
                     current_urls.extend(ExtractImages(message.content).images_urls())
                 for attachement in message.attachments:
-                    logging.info("Attachement: %s", attachement.content_type)
                     image_content_types = ("image/png", "image/jpg", "image/jpeg", "image/webp")
                     if attachement.content_type in image_content_types:
                         image_file = await attachement.to_file()
                         attached_files.append(image_file)
+                    elif attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
+                        logging.info(f"Found attachement with image extension: {attachement.filename}")
+                        attached_files.append(await attachement.to_file())
                 if len(current_urls) > 0 or len(attached_files) > 0:
                     artist_messages.append(
                         AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
