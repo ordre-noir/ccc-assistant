@@ -84,7 +84,7 @@ class ProcessMessagesThenPublish:
             except:
                 logging.exception("Error while processing message %s", artist_message.source.jump_url)
             finally:
-                if not do:
+                if do:
                     self._image_to_process_queue.task_done()
 
     async def _monitoring(self):
@@ -150,14 +150,6 @@ class MoveCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.send_to_forum_queue = asyncio.Queue(maxsize=50)
-        self.producer_completed: asyncio.Event = asyncio.Event()
-
-    async def send_to_forum(self):
-        while True:
-            artist_message = await self.send_to_forum_queue.get()
-            logging.info(f'Send {artist_message.author} message to forum')
-            self.send_to_forum_queue.task_done()
 
     @discord.Cog.listener()
     async def on_ready(self):
