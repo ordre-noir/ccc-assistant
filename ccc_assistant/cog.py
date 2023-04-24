@@ -3,6 +3,7 @@ import calendar
 import datetime
 import logging
 import re
+from asyncio import CancelledError
 from time import perf_counter
 from typing import List
 
@@ -42,7 +43,6 @@ class ProcessMessagesThenPublish:
                         image_file = await attachement.to_file()
                         attached_files.append(image_file)
                     elif attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                        logging.info(f"Found attachement with image extension: {attachement.filename}")
                         attached_files.append(await attachement.to_file())
                 if len(current_urls) > 0 or len(attached_files) > 0:
                     arist_message = AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
@@ -51,39 +51,54 @@ class ProcessMessagesThenPublish:
         self._producer_completed.set()
 
     async def _process_messages(self):
-        while True:
+        do = True
+        while do:
             artist_message: AristMessage = await self._image_to_process_queue.get()
-            await self._context.send(
-                f"Processing {artist_message.source.jump_url} message. "
-                f"link(s)={len(artist_message.urls)}, "
-                f"attachement(s)={len(artist_message.files)} "),
+            try:
+                await self._context.send(
+                    f"Processing {artist_message.source.jump_url} message. "
+                    f"link(s)={len(artist_message.urls)}, "
+                    f"attachement(s)={len(artist_message.files)} "),
 
-            utc_time = calendar.timegm(artist_message.when.utctimetuple())
-            posted_time = f"<t:{utc_time}:f>"
-            separator = f"""``` Imported content from old channel ```
-{artist_message.author}
-Original date:{posted_time}
-"""
-            await self._destination.send(content=separator)
+                utc_time = calendar.timegm(artist_message.when.utctimetuple())
+                posted_time = f"<t:{utc_time}:f>"
+                separator = f"""``` Imported content from old channel ```
+    {artist_message.author}
+    Original date:{posted_time}
+    """
+                await self._destination.send(content=separator)
 
-            urls = " ".join(artist_message.urls)
-            if urls:
-                await self._destination.send(content=urls)
+                urls = " ".join(artist_message.urls)
+                if urls:
+                    await self._destination.send(content=urls)
 
-            for file in artist_message.files:
-                try:
-                    await self._destination.send(file=file)
-                except:
-                    await self._context.send(
-                        f"Error while sending attachement {file.filename}for message {artist_message.source.jump_url}")
-
-            self._image_to_process_queue.task_done()
+                for file in artist_message.files:
+                    try:
+                        await self._destination.send(file=file)
+                    except:
+                        await self._context.send(
+                            f"Error while sending attachement {file.filename} for message {artist_message.source.jump_url}")
+                        raise
+            except CancelledError:
+                do = False
+            except:
+                logging.exception("Error while processing message %s", artist_message.source.jump_url)
+            finally:
+                if not do:
+                    self._image_to_process_queue.task_done()
 
     async def _monitoring(self):
-        while True:
+        do = True
+        while do:
             max_size = self._image_to_process_queue.maxsize
-            await self._context.send(f"Queue size (update every 15sec): {self._image_to_process_queue.qsize()}/{max_size}")
-            await asyncio.sleep(15)
+            try:
+                await self._context.send(
+                    f"Queue size (update every 30sec): {self._image_to_process_queue.qsize()}/{max_size}")
+                await asyncio.sleep(30)
+            except CancelledError:
+                do = False
+            except:
+                logging.exception("Error while monitoring queue")
 
     async def _log_exceptions(self, awaitable):
         try:
@@ -232,3 +247,7 @@ class MoveCog(commands.Cog):
         to_process = len(histories)
         await ctx.send(f"Total messages processed: **{to_process}**.")
         await ProcessMessagesThenPublish(ctx, histories, origin, destination).main()
+
+    @discord.Cog.listener()
+    async def on_error(self, event, *args, **kwargs):
+        logging.error(f'event={event} args={args} kwargs={kwargs}')
