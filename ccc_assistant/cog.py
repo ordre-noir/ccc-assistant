@@ -117,13 +117,14 @@ class ProcessMessagesThenPublish:
             asyncio.create_task(self._log_exceptions(self._monitoring()))
         ]
 
-        await self._producer_completed.wait()
-        await self._image_to_process_queue.join()
+        try:
+            await self._producer_completed.wait()
+            await self._image_to_process_queue.join()
+        finally:
+            for coroutine in coroutines:
+                coroutine.cancel()
 
-        for coroutine in coroutines:
-            coroutine.cancel()
         end = perf_counter()
-
         await self._context.send(f"Finished in {end - start:.2f} seconds")
 
 
