@@ -8,8 +8,9 @@ from time import perf_counter
 from typing import List
 
 import discord
-from discord import ApplicationContext, Option
+from discord import ApplicationContext, Option, Object
 from discord.ext import commands
+from discord.utils import time_snowflake
 
 from .config import VERSION
 
@@ -223,16 +224,17 @@ class MoveCog(commands.Cog):
             before_message_id = origin.last_message_id
 
         before_message: discord.Message = await origin.fetch_message(int(before_message_id))
-        before_date = before_message.created_at
+        before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
         until_date = None
         if until_message_id:
             until_message = await origin.fetch_message(int(until_message_id))
-            until_date = until_message.created_at
+            until_date = Object(id=time_snowflake(until_message.created_at, high=False) - 1)
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to " \
                               f"{until_message.jump_url}"
         else:
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to the " \
                               f"first message"
+
         await ctx.respond(content_message)
 
         histories = await origin.history(limit=None, before=before_date, after=until_date, oldest_first=True).flatten()
