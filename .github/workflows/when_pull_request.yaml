@@ -1,0 +1,31 @@
+name: CI / Pull Request
+
+on:
+  pull_request:
+    types: [created, synchronize]
+    branches: [ main ]
+
+jobs:
+  multi-os-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      max-parallel: 2
+      matrix:
+        os: [ ubuntu-20.04 ]
+        python-version: [ '3.10' ]
+    steps:
+      - uses: actions/checkout@v3
+        name: Checkout code
+        with:
+          fetch-depth: 1
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install tools
+        run: |
+          pip install --upgrade pip
+          pip install poetry
+          poetry install
+      - name: Run Tests
+        run: poetry run pytest
