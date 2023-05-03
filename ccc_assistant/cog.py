@@ -3,7 +3,6 @@ import calendar
 import datetime
 import logging
 import re
-import tracemalloc
 from asyncio import CancelledError
 from time import perf_counter
 from typing import List
@@ -90,18 +89,12 @@ class ProcessMessagesThenPublish:
         while do:
             max_size = self._image_to_process_queue.maxsize
             try:
+                interval_refresh_in_sec = 30
                 await self._context.send(
-                    f"Queue size (update every 30sec): {self._image_to_process_queue.qsize()}/{max_size}")
-                snapshot = tracemalloc.take_snapshot()
-                top_stats = snapshot.statistics('lineno')
-                logging.info("[ Top 10 ]")
-                for stat in top_stats[:10]:
-                    logging.info(stat)
-                await asyncio.sleep(30)
+                    f"Queue size (update every {interval_refresh_in_sec}sec): {self._image_to_process_queue.qsize()}/{max_size}")
+                await asyncio.sleep(interval_refresh_in_sec)
             except CancelledError:
                 do = False
-            except:
-                logging.exception("Error while monitoring queue")
 
     async def _log_exceptions(self, awaitable):
         try:
@@ -113,7 +106,6 @@ class ProcessMessagesThenPublish:
 
     async def main(self, message_iter: HistoryIterator):
 
-        tracemalloc.start()
         start = perf_counter()
         coroutines = [
             asyncio.create_task(self._log_exceptions(self._read_messages(message_iter))),
@@ -241,10 +233,6 @@ class MoveCog(commands.Cog):
                               f"first message"
 
         await ctx.respond(content_message)
-        # histories = await origin.history(limit=None, before=before_date, after=until_date, oldest_first=True).flatten()
-        # to_process = len(histories)
-        # del histories
-        # await ctx.send(f"Total messages processed: **{to_process}**.")
         message_iter: HistoryIterator = origin.history(limit=None, before=before_date, after=until_date,
                                                        oldest_first=True)
         await ProcessMessagesThenPublish(ctx, origin, destination).main(message_iter)
