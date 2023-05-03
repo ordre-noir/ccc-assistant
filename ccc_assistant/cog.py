@@ -3,6 +3,7 @@ import calendar
 import datetime
 import logging
 import re
+import tracemalloc
 from asyncio import CancelledError
 from time import perf_counter
 from typing import List
@@ -10,24 +11,23 @@ from typing import List
 import discord
 from discord import ApplicationContext, Option, Object
 from discord.ext import commands
+from discord.iterators import HistoryIterator
 from discord.utils import time_snowflake
 
 from .config import VERSION
 
 
 class ProcessMessagesThenPublish:
-    def __init__(self, context: ApplicationContext, messages: List[discord.Message], origin: discord.TextChannel,
-                 destination: discord.Thread):
+    def __init__(self, context: ApplicationContext, origin: discord.TextChannel, destination: discord.Thread):
         self._destination = destination
         self._origin = origin
         self._context = context
-        self._messages = messages
 
         self._producer_completed = asyncio.Event()
         self._image_to_process_queue = asyncio.Queue(maxsize=20)
 
-    async def _read_messages(self):
-        for message in self._messages:
+    async def _read_messages(self, messages: HistoryIterator):
+        async for message in messages:
             if message.type == discord.MessageType.default and not message.author.bot:
                 if isinstance(message.author, discord.Member):
                     nick = f"/{message.author.nick}"
@@ -40,11 +40,10 @@ class ProcessMessagesThenPublish:
                     current_urls.extend(ExtractImages(message.content).images_urls())
                 for attachement in message.attachments:
                     image_content_types = ("image/png", "image/jpg", "image/jpeg", "image/webp")
-                    if attachement.content_type in image_content_types:
+                    if attachement.content_type in image_content_types or (
+                            attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp"))):
                         image_file = await attachement.to_file()
                         attached_files.append(image_file)
-                    elif attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                        attached_files.append(await attachement.to_file())
                 if len(current_urls) > 0 or len(attached_files) > 0:
                     arist_message = AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
                                                  files=attached_files)
@@ -56,10 +55,9 @@ class ProcessMessagesThenPublish:
         while do:
             artist_message: AristMessage = await self._image_to_process_queue.get()
             try:
-                await self._context.send(
-                    f"Processing {artist_message.source.jump_url} message. "
-                    f"link(s)={len(artist_message.urls)}, "
-                    f"attachement(s)={len(artist_message.files)} "),
+                logging.info("Processing %s message link(s)=%s, attachement(s)=%s", artist_message.source.jump_url,
+                             len(artist_message.urls),
+                             len(artist_message.files))
 
                 utc_time = calendar.timegm(artist_message.when.utctimetuple())
                 posted_time = f"<t:{utc_time}:f>"
@@ -79,7 +77,6 @@ class ProcessMessagesThenPublish:
                     except:
                         await self._context.send(
                             f"Error while sending attachement {file.filename} for message {artist_message.source.jump_url}")
-                        raise
             except CancelledError:
                 do = False
             except:
@@ -95,6 +92,11 @@ class ProcessMessagesThenPublish:
             try:
                 await self._context.send(
                     f"Queue size (update every 30sec): {self._image_to_process_queue.qsize()}/{max_size}")
+                snapshot = tracemalloc.take_snapshot()
+                top_stats = snapshot.statistics('lineno')
+                logging.info("[ Top 10 ]")
+                for stat in top_stats[:10]:
+                    logging.info(stat)
                 await asyncio.sleep(30)
             except CancelledError:
                 do = False
@@ -109,10 +111,12 @@ class ProcessMessagesThenPublish:
         except:
             logging.exception("Unhandled exception %s", awaitable)
 
-    async def main(self):
+    async def main(self, message_iter: HistoryIterator):
+
+        tracemalloc.start()
         start = perf_counter()
         coroutines = [
-            asyncio.create_task(self._log_exceptions(self._read_messages())),
+            asyncio.create_task(self._log_exceptions(self._read_messages(message_iter))),
             asyncio.create_task(self._log_exceptions(self._process_messages())),
             asyncio.create_task(self._log_exceptions(self._monitoring()))
         ]
@@ -237,11 +241,13 @@ class MoveCog(commands.Cog):
                               f"first message"
 
         await ctx.respond(content_message)
-
-        histories = await origin.history(limit=None, before=before_date, after=until_date, oldest_first=True).flatten()
-        to_process = len(histories)
-        await ctx.send(f"Total messages processed: **{to_process}**.")
-        await ProcessMessagesThenPublish(ctx, histories, origin, destination).main()
+        # histories = await origin.history(limit=None, before=before_date, after=until_date, oldest_first=True).flatten()
+        # to_process = len(histories)
+        # del histories
+        # await ctx.send(f"Total messages processed: **{to_process}**.")
+        message_iter: HistoryIterator = origin.history(limit=None, before=before_date, after=until_date,
+                                                       oldest_first=True)
+        await ProcessMessagesThenPublish(ctx, origin, destination).main(message_iter)
 
     @discord.Cog.listener()
     async def on_error(self, event, *args, **kwargs):
