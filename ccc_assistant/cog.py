@@ -76,6 +76,8 @@ class ProcessMessagesThenPublish:
                     except:
                         await self._context.send(
                             f"Error while sending attachement {file.filename} for message {artist_message.source.jump_url}")
+                        logging.exception("Error while sending attachement %s for message %s",
+                                          artist_message.source.jump_url)
             except CancelledError:
                 do = False
             except:
@@ -201,7 +203,7 @@ class MoveCog(commands.Cog):
                                               name_localizations={"fr": "destination"},
                                               required=True,
                                               description_localizations={"fr": "Choisissez le fils d'un forum"}),
-                          until_message_id: Option(name="from-message", input_type=str,
+                          after_message_id: Option(name="from-message", input_type=str,
                                                    name_localizations={"fr": "depuis-message"},
                                                    description="Message id to start from, fallback to the oldest message",
                                                    required=False, default=None, description_localizations={
@@ -219,21 +221,27 @@ class MoveCog(commands.Cog):
 
         if not before_message_id:
             before_message_id = origin.last_message_id
-
         before_message: discord.Message = await origin.fetch_message(int(before_message_id))
-        before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
-        until_date = None
-        if until_message_id:
-            until_message = await origin.fetch_message(int(until_message_id))
-            until_date = Object(id=time_snowflake(until_message.created_at, high=False) - 1)
+
+        after_message = None
+        if after_message_id:
+            after_message = await origin.fetch_message(int(after_message_id))
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to " \
-                              f"{until_message.jump_url}"
+                              f"{after_message.jump_url}"
         else:
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to the " \
                               f"first message"
-
         await ctx.respond(content_message)
-        message_iter: HistoryIterator = origin.history(limit=None, before=before_date, after=until_date,
+
+        after_date = None
+        before_date = None
+        if before_message and after_message:
+            after_date = Object(id=time_snowflake(after_message.created_at, high=False) - 1)
+            before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
+        elif before_message and not after_message:
+            before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
+
+        message_iter: HistoryIterator = origin.history(limit=None, after=after_date, before=before_date,
                                                        oldest_first=True)
         await ProcessMessagesThenPublish(ctx, origin, destination).main(message_iter)
 
