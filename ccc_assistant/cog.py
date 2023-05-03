@@ -10,24 +10,23 @@ from typing import List
 import discord
 from discord import ApplicationContext, Option, Object
 from discord.ext import commands
+from discord.iterators import HistoryIterator
 from discord.utils import time_snowflake
 
 from .config import VERSION
 
 
 class ProcessMessagesThenPublish:
-    def __init__(self, context: ApplicationContext, messages: List[discord.Message], origin: discord.TextChannel,
-                 destination: discord.Thread):
+    def __init__(self, context: ApplicationContext, origin: discord.TextChannel, destination: discord.Thread):
         self._destination = destination
         self._origin = origin
         self._context = context
-        self._messages = messages
 
         self._producer_completed = asyncio.Event()
         self._image_to_process_queue = asyncio.Queue(maxsize=20)
 
-    async def _read_messages(self):
-        for message in self._messages:
+    async def _read_messages(self, messages: HistoryIterator):
+        async for message in messages:
             if message.type == discord.MessageType.default and not message.author.bot:
                 if isinstance(message.author, discord.Member):
                     nick = f"/{message.author.nick}"
@@ -40,11 +39,10 @@ class ProcessMessagesThenPublish:
                     current_urls.extend(ExtractImages(message.content).images_urls())
                 for attachement in message.attachments:
                     image_content_types = ("image/png", "image/jpg", "image/jpeg", "image/webp")
-                    if attachement.content_type in image_content_types:
+                    if attachement.content_type in image_content_types or (
+                            attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp"))):
                         image_file = await attachement.to_file()
                         attached_files.append(image_file)
-                    elif attachement.filename and attachement.filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                        attached_files.append(await attachement.to_file())
                 if len(current_urls) > 0 or len(attached_files) > 0:
                     arist_message = AristMessage(artist, source=message, when=message.created_at, urls=current_urls,
                                                  files=attached_files)
@@ -56,10 +54,9 @@ class ProcessMessagesThenPublish:
         while do:
             artist_message: AristMessage = await self._image_to_process_queue.get()
             try:
-                await self._context.send(
-                    f"Processing {artist_message.source.jump_url} message. "
-                    f"link(s)={len(artist_message.urls)}, "
-                    f"attachement(s)={len(artist_message.files)} "),
+                logging.info("Processing %s message link(s)=%s, attachement(s)=%s", artist_message.source.jump_url,
+                             len(artist_message.urls),
+                             len(artist_message.files))
 
                 utc_time = calendar.timegm(artist_message.when.utctimetuple())
                 posted_time = f"<t:{utc_time}:f>"
@@ -79,7 +76,8 @@ class ProcessMessagesThenPublish:
                     except:
                         await self._context.send(
                             f"Error while sending attachement {file.filename} for message {artist_message.source.jump_url}")
-                        raise
+                        logging.exception("Error while sending attachement %s for message %s",
+                                          artist_message.source.jump_url)
             except CancelledError:
                 do = False
             except:
@@ -93,13 +91,12 @@ class ProcessMessagesThenPublish:
         while do:
             max_size = self._image_to_process_queue.maxsize
             try:
+                interval_refresh_in_sec = 30
                 await self._context.send(
-                    f"Queue size (update every 30sec): {self._image_to_process_queue.qsize()}/{max_size}")
-                await asyncio.sleep(30)
+                    f"Queue size (update every {interval_refresh_in_sec}sec): {self._image_to_process_queue.qsize()}/{max_size}")
+                await asyncio.sleep(interval_refresh_in_sec)
             except CancelledError:
                 do = False
-            except:
-                logging.exception("Error while monitoring queue")
 
     async def _log_exceptions(self, awaitable):
         try:
@@ -109,10 +106,11 @@ class ProcessMessagesThenPublish:
         except:
             logging.exception("Unhandled exception %s", awaitable)
 
-    async def main(self):
+    async def main(self, message_iter: HistoryIterator):
+
         start = perf_counter()
         coroutines = [
-            asyncio.create_task(self._log_exceptions(self._read_messages())),
+            asyncio.create_task(self._log_exceptions(self._read_messages(message_iter))),
             asyncio.create_task(self._log_exceptions(self._process_messages())),
             asyncio.create_task(self._log_exceptions(self._monitoring()))
         ]
@@ -205,7 +203,7 @@ class MoveCog(commands.Cog):
                                               name_localizations={"fr": "destination"},
                                               required=True,
                                               description_localizations={"fr": "Choisissez le fils d'un forum"}),
-                          until_message_id: Option(name="from-message", input_type=str,
+                          after_message_id: Option(name="from-message", input_type=str,
                                                    name_localizations={"fr": "depuis-message"},
                                                    description="Message id to start from, fallback to the oldest message",
                                                    required=False, default=None, description_localizations={
@@ -223,25 +221,29 @@ class MoveCog(commands.Cog):
 
         if not before_message_id:
             before_message_id = origin.last_message_id
-
         before_message: discord.Message = await origin.fetch_message(int(before_message_id))
-        before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
-        until_date = None
-        if until_message_id:
-            until_message = await origin.fetch_message(int(until_message_id))
-            until_date = Object(id=time_snowflake(until_message.created_at, high=False) - 1)
+
+        after_message = None
+        if after_message_id:
+            after_message = await origin.fetch_message(int(after_message_id))
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to " \
-                              f"{until_message.jump_url}"
+                              f"{after_message.jump_url}"
         else:
             content_message = f"Exporting images of {origin.mention} to {destination.mention} from message {before_message.jump_url} to the " \
                               f"first message"
-
         await ctx.respond(content_message)
 
-        histories = await origin.history(limit=None, before=before_date, after=until_date, oldest_first=True).flatten()
-        to_process = len(histories)
-        await ctx.send(f"Total messages processed: **{to_process}**.")
-        await ProcessMessagesThenPublish(ctx, histories, origin, destination).main()
+        after_date = None
+        before_date = None
+        if before_message and after_message:
+            after_date = Object(id=time_snowflake(after_message.created_at, high=False) - 1)
+            before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
+        elif before_message and not after_message:
+            before_date = Object(id=time_snowflake(before_message.created_at, high=True) + 1)
+
+        message_iter: HistoryIterator = origin.history(limit=None, after=after_date, before=before_date,
+                                                       oldest_first=True)
+        await ProcessMessagesThenPublish(ctx, origin, destination).main(message_iter)
 
     @discord.Cog.listener()
     async def on_error(self, event, *args, **kwargs):
