@@ -76,7 +76,7 @@ class ProcessMessagesThenPublish:
                     except:
                         await self._context.send(
                             f"Error while sending attachement {file.filename} for message {artist_message.source.jump_url}")
-                        logging.exception("Error while sending attachement %s for message %s",
+                        logging.exception("Error while sending attachement %s for message %s", file.filename,
                                           artist_message.source.jump_url)
             except CancelledError:
                 do = False
